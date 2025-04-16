@@ -206,7 +206,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-viper/mapstructure/v2/internal/errors"
+	"github.com/epikur-io/go-mapstructure/v2/internal/errors"
 )
 
 // DecodeHookFunc is the callback function that can be used for
@@ -375,6 +375,12 @@ type DecoderConfig struct {
 	// interface. Types implementing Unmarshaler will be decoded using the
 	// standard struct decoding logic instead.
 	DisableUnmarshaler bool
+
+	// When enabled, the target field will be explicitly set to nil or its zero value
+	// if the input is nil. This is useful to achieve a merge behavior,
+	// when you only want to update target fields that are present in the input
+	// This flag will also cause to ignore the ZeroFields flag.
+	ExplicitNilValues bool
 }
 
 // A Decoder takes a raw interface value and turns it into structured
@@ -562,6 +568,10 @@ func (d *Decoder) decode(name string, input any, outVal reflect.Value) error {
 		input = nil
 	}
 	if input == nil {
+		if d.config.ExplicitNilValues {
+			outVal.Set(reflect.Zero(outVal.Type()))
+			return nil
+		}
 		// If the data is nil, then we don't set anything, unless ZeroFields is set
 		// to true.
 		if d.config.ZeroFields {
