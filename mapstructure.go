@@ -166,7 +166,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/epikur-io/go-mapstructure/v2/internal/errors"
+	"github.com/epikur-io/go-mapstructure/v3/internal/errors"
 )
 
 // DecodeHookFunc is the callback function that can be used for
