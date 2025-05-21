@@ -15,8 +15,6 @@ structure.
 
 ## About this fork
 
-// !TODO: finish docs
-
 This is a fork of [mapstructure](https://github.com/go-viper/mapstructure), that adds a special config flag to Decoder config for following use case:
 
 Suppose we have a model like:
