@@ -32,7 +32,7 @@ type Profile struct {
 }
 ```
 
-If we enable `DecodeNil` and `ExplicitNilPtrStructs` in the Decoder config we now get explicit handling of null values if the target type is a pointer to a struct. This is useful when you have for example a CRUD app and you only want to send the fields that change for create & update requests.
+If we enable `ExplicitNilValues` in the Decoder config we now get explicit handling of null values if the target type is a pointer to a struct. This is useful when you have for example a CRUD app and you only want to send the fields that change for create & update requests.
 
 ### Example
 
@@ -66,7 +66,7 @@ If we want to change only the `profile.description` and leave `profile.title` an
 
 ```json
 {
-	"profile": {
+  "profile": {
     "description": "new title"
   }
 }
