@@ -333,6 +333,55 @@ func TestComposeDecodeHookFunc_ReflectValueHook(t *testing.T) {
 	}
 }
 
+// TestComposeDecodeHookFunc_NilValue tests that ComposeDecodeHookFunc
+// doesn't panic when a hook returns nil (issue #121).
+func TestComposeDecodeHookFunc_NilValue(t *testing.T) {
+	hook := func(f reflect.Kind, t reflect.Kind, data any) (any, error) {
+		return data, nil
+	}
+
+	f := ComposeDecodeHookFunc(hook, hook)
+
+	// Test with nil input - this should not panic
+	result, err := DecodeHookExec(f, reflect.Value{}, reflect.ValueOf(""))
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if result != nil {
+		t.Fatalf("expected nil result, got: %#v", result)
+	}
+}
+
+// TestComposeDecodeHookFunc_DecodeNilRemain tests the specific scenario from issue #121
+// where using ComposeDecodeHookFunc with DecodeNil and ,remain tag causes a panic.
+func TestComposeDecodeHookFunc_DecodeNilRemain(t *testing.T) {
+	v := make(map[string]any)
+	v["m"] = nil
+
+	var result struct {
+		V map[string]any `mapstructure:",remain"`
+	}
+
+	hook := func(f reflect.Kind, t reflect.Kind, data any) (any, error) {
+		return data, nil
+	}
+
+	dec, err := NewDecoder(&DecoderConfig{
+		DecodeHook: ComposeDecodeHookFunc(hook, hook),
+		DecodeNil:  true,
+		Result:     &result,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error creating decoder: %s", err)
+	}
+
+	// This should not panic
+	err = dec.Decode(&v)
+	if err != nil {
+		t.Fatalf("unexpected error decoding: %s", err)
+	}
+}
+
 func TestStringToSliceHookFunc(t *testing.T) {
 	// Test comma separator
 	commaSuite := decodeHookTestSuite[string, []string]{

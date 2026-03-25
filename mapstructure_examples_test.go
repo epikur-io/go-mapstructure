@@ -357,3 +357,56 @@ func ExampleDecode_decodeHookFunc() {
 	// Output:
 	// mapstructure.Person{Name:"Mitchell", Location:mapstructure.PersonLocation{Latitude:-35.2809, Longtitude:149.13}}
 }
+
+// ExampleServerConfig is used by ExampleDecode_unmarshaler.
+// It implements the Unmarshaler interface to apply custom decoding logic.
+type ExampleServerConfig struct {
+	Host string
+	Port int
+}
+
+// UnmarshalMapstructure implements the Unmarshaler interface.
+// It applies default values when fields are missing from the input.
+func (s *ExampleServerConfig) UnmarshalMapstructure(data any) error {
+	m, ok := data.(map[string]any)
+	if !ok {
+		return fmt.Errorf("expected map[string]any, got %T", data)
+	}
+
+	// Apply defaults first
+	s.Host = "localhost"
+	s.Port = 8080
+
+	// Override with provided values
+	if host, ok := m["host"].(string); ok {
+		s.Host = host
+	}
+	if port, ok := m["port"].(int); ok {
+		s.Port = port
+	}
+
+	return nil
+}
+
+func ExampleDecode_unmarshaler() {
+	// Types that implement the Unmarshaler interface can control how they
+	// are decoded from map data. This is useful for applying defaults,
+	// custom validation, or complex transformation logic.
+
+	input := map[string]any{
+		"host": "example.com",
+		// Note: port is intentionally omitted to demonstrate default handling
+	}
+
+	var result ExampleServerConfig
+	err := Decode(input, &result)
+	if err != nil {
+		panic(err)
+	}
+
+	// The Unmarshaler applied the default port value since it wasn't in the input
+	fmt.Printf("Host: %s, Port: %d", result.Host, result.Port)
+
+	// Output:
+	// Host: example.com, Port: 8080
+}

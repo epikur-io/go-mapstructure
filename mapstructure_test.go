@@ -897,7 +897,7 @@ func TestDecode_EmbeddedPointerSquash_FromMapToStruct(t *testing.T) {
 func TestDecode_EmbeddedPointerSquash_WithoutPreInitializedStructs_FromMapToStruct(t *testing.T) {
 	t.Parallel()
 
-	input := map[string]interface{}{
+	input := map[string]any{
 		"Vstring": "foo",
 		"Vunique": "bar",
 	}
@@ -3235,6 +3235,231 @@ func TestDecoder_IgnoreUntaggedFieldsWithStruct(t *testing.T) {
 	}
 }
 
+func TestDecoder_MultiTagInline(t *testing.T) {
+	type Inner struct {
+		A int `yaml:"a"`
+	}
+
+	type Wrap struct {
+		Inner `yaml:",inline"`
+	}
+
+	input := map[string]any{"a": 1}
+	var result Wrap
+
+	dec, err := NewDecoder(&DecoderConfig{
+		TagName:          "config,yaml",
+		SquashTagOption:  "inline",
+		WeaklyTypedInput: true,
+		Result:           &result,
+	})
+	if err != nil {
+		t.Fatalf("NewDecoder error: %v", err)
+	}
+
+	if err := dec.Decode(input); err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+
+	if result.Inner.A != 1 {
+		t.Fatalf("expected inline field A=1, got %d", result.Inner.A)
+	}
+}
+
+func TestDecoder_MultiTagRemain(t *testing.T) {
+	type Wrap struct {
+		Known string         `yaml:"known"`
+		Extra map[string]any `yaml:",remain"`
+	}
+
+	input := map[string]any{
+		"known":  "ok",
+		"extra1": "v1",
+		"extra2": 2,
+	}
+	var result Wrap
+
+	dec, err := NewDecoder(&DecoderConfig{
+		TagName:          "config,yaml",
+		WeaklyTypedInput: true,
+		Result:           &result,
+	})
+	if err != nil {
+		t.Fatalf("NewDecoder error: %v", err)
+	}
+
+	if err := dec.Decode(input); err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+
+	if result.Known != "ok" {
+		t.Fatalf("expected Known=ok, got %q", result.Known)
+	}
+	if result.Extra == nil || len(result.Extra) != 2 {
+		t.Fatalf("expected Extra to contain 2 items, got %v", result.Extra)
+	}
+	if result.Extra["extra1"] != "v1" {
+		t.Fatalf("expected extra1=v1, got %v", result.Extra["extra1"])
+	}
+}
+
+func TestDecoder_MultiTagBasic(t *testing.T) {
+	type Person struct {
+		Name  string `yaml:"name"`
+		Age   int    `json:"age"`
+		Email string `config:"email_address"`
+	}
+
+	input := map[string]any{
+		"name":          "Alice",
+		"age":           30,
+		"email_address": "alice@example.com",
+	}
+	var result Person
+
+	dec, err := NewDecoder(&DecoderConfig{
+		TagName: "yaml,json,config",
+		Result:  &result,
+	})
+	if err != nil {
+		t.Fatalf("NewDecoder error: %v", err)
+	}
+
+	if err := dec.Decode(input); err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+
+	if result.Name != "Alice" {
+		t.Fatalf("expected Name=Alice, got %q", result.Name)
+	}
+	if result.Age != 30 {
+		t.Fatalf("expected Age=30, got %d", result.Age)
+	}
+	if result.Email != "alice@example.com" {
+		t.Fatalf("expected Email=alice@example.com, got %q", result.Email)
+	}
+}
+
+func TestDecoder_MultiTagPriority(t *testing.T) {
+	// When both tags exist, the first tag name in the list takes precedence
+	type Item struct {
+		Value string `yaml:"yaml_value" json:"json_value"`
+	}
+
+	input := map[string]any{
+		"yaml_value": "from_yaml",
+		"json_value": "from_json",
+	}
+
+	// Test yaml,json order - should use yaml tag
+	var result1 Item
+	dec1, err := NewDecoder(&DecoderConfig{
+		TagName: "yaml,json",
+		Result:  &result1,
+	})
+	if err != nil {
+		t.Fatalf("NewDecoder error: %v", err)
+	}
+	if err := dec1.Decode(input); err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+	if result1.Value != "from_yaml" {
+		t.Fatalf("with yaml,json expected Value=from_yaml, got %q", result1.Value)
+	}
+
+	// Test json,yaml order - should use json tag
+	var result2 Item
+	dec2, err := NewDecoder(&DecoderConfig{
+		TagName: "json,yaml",
+		Result:  &result2,
+	})
+	if err != nil {
+		t.Fatalf("NewDecoder error: %v", err)
+	}
+	if err := dec2.Decode(input); err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+	if result2.Value != "from_json" {
+		t.Fatalf("with json,yaml expected Value=from_json, got %q", result2.Value)
+	}
+}
+
+func TestDecoder_MultiTagWhitespace(t *testing.T) {
+	type Person struct {
+		Name string `yaml:"name"`
+		Age  int    `json:"age"`
+	}
+
+	input := map[string]any{
+		"name": "Bob",
+		"age":  25,
+	}
+	var result Person
+
+	// Test with whitespace around tag names
+	dec, err := NewDecoder(&DecoderConfig{
+		TagName: " yaml , json ",
+		Result:  &result,
+	})
+	if err != nil {
+		t.Fatalf("NewDecoder error: %v", err)
+	}
+
+	if err := dec.Decode(input); err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+
+	if result.Name != "Bob" {
+		t.Fatalf("expected Name=Bob, got %q", result.Name)
+	}
+	if result.Age != 25 {
+		t.Fatalf("expected Age=25, got %d", result.Age)
+	}
+}
+
+func TestDecoder_MultiTagEmptyNames(t *testing.T) {
+	type Person struct {
+		Name string `mapstructure:"name"`
+	}
+
+	input := map[string]any{
+		"name": "Charlie",
+	}
+
+	tests := []struct {
+		name    string
+		tagName string
+	}{
+		{"leading comma", ",yaml"},
+		{"trailing comma", "yaml,"},
+		{"multiple commas", ",,yaml,,"},
+		{"only commas", ",,,"},
+		{"empty with spaces", " , , "},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var result Person
+			dec, err := NewDecoder(&DecoderConfig{
+				TagName: tc.tagName,
+				Result:  &result,
+			})
+			if err != nil {
+				t.Fatalf("NewDecoder error: %v", err)
+			}
+
+			if err := dec.Decode(input); err != nil {
+				t.Fatalf("Decode error: %v", err)
+			}
+
+			// With invalid/empty tag names, should fall back to mapstructure
+			if result.Name != "Charlie" {
+				t.Fatalf("expected Name=Charlie (fallback to mapstructure), got %q", result.Name)
+			}
+		})
+	}
+}
+
 func TestDecoder_DecodeNilOption(t *testing.T) {
 	t.Parallel()
 
@@ -3577,13 +3802,6 @@ func testArrayInput(t *testing.T, input map[string]any, expected *Array) {
 	}
 }
 
-func stringPtr(v string) *string  { return &v }
-func intPtr(v int) *int           { return &v }
-func uintPtr(v uint) *uint        { return &v }
-func boolPtr(v bool) *bool        { return &v }
-func floatPtr(v float64) *float64 { return &v }
-func interfacePtr(v any) *any     { return &v }
-
 // Test struct for embedded error message testing
 type TestDatabaseConfig struct {
 	Host     string `mapstructure:"host"`
@@ -3636,5 +3854,822 @@ func TestDecoder_ErrorUnused_EmbeddedStruct_QualifiedTypeName(t *testing.T) {
 	// Check that unused keys are mentioned
 	if !strings.Contains(errorMessage, "invalid_key") {
 		t.Errorf("Expected error message to contain 'invalid_key', got: %s", errorMessage)
+	}
+}
+
+func TestDecode_structArrayDeepMap(t *testing.T) {
+	type SourceChild struct {
+		String string `mapstructure:"some-string"`
+	}
+
+	type SourceParent struct {
+		ChildrenA []SourceChild  `mapstructure:"children-a,deep"`
+		ChildrenB *[]SourceChild `mapstructure:"children-b,deep"`
+	}
+
+	var target map[string]any
+
+	source := SourceParent{
+		ChildrenA: []SourceChild{
+			{String: "one"},
+			{String: "two"},
+		},
+		ChildrenB: &[]SourceChild{
+			{String: "one"},
+			{String: "two"},
+		},
+	}
+
+	if err := Decode(source, &target); err != nil {
+		t.Fatalf("got error: %s", err)
+	}
+
+	expected := map[string]any{
+		"children-a": []map[string]any{
+			{"some-string": "one"},
+			{"some-string": "two"},
+		},
+		"children-b": []map[string]any{
+			{"some-string": "one"},
+			{"some-string": "two"},
+		},
+	}
+
+	if !reflect.DeepEqual(target, expected) {
+		t.Fatalf("failed: \nexpected: %#v\nresult: %#v", expected, target)
+	}
+}
+
+func TestDecoder_RootName(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"surname": "green",
+		"relation": map[string]any{
+			"surname": "black",
+		},
+	}
+
+	var result struct {
+		Name     string `mapstructure:"name"`
+		Relation struct {
+			Name string `mapstructure:"name"`
+		} `mapstructure:"relation"`
+	}
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		ErrorUnset:  true,
+		ErrorUnused: true,
+		Result:      &result,
+		RootName:    "root",
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	expectedErrors := []string{
+		`'root.relation' has invalid keys: surname`,
+		`'root.relation' has unset fields: name`,
+		`'root' has invalid keys: surname`,
+		`'root' has unset fields: name`,
+	}
+
+	failed := false
+
+	for _, expectedErr := range expectedErrors {
+		if !strings.Contains(err.Error(), expectedErr) {
+			failed = true
+		}
+	}
+
+	if failed {
+		t.Errorf("unexpected error message, got: %s", err.Error())
+	}
+}
+
+func stringPtr(v string) *string  { return &v }
+func intPtr(v int) *int           { return &v }
+func uintPtr(v uint) *uint        { return &v }
+func boolPtr(v bool) *bool        { return &v }
+func floatPtr(v float64) *float64 { return &v }
+func interfacePtr(v any) *any     { return &v }
+
+type TestMapFieldName struct {
+	HostName string
+	Username string
+}
+
+func TestDecoder_MapFieldNameMapFromStruct(t *testing.T) {
+	t.Parallel()
+
+	var structKeys map[string]any
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		ErrorUnused: true, // Enable error on unused keys
+		Result:      &structKeys,
+		MapFieldName: func(s string) string {
+			if s == "HostName" {
+				return "host_name"
+			}
+			return s
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	var input TestMapFieldName
+
+	err = decoder.Decode(&input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	_, ok := structKeys["host_name"]
+	if !ok {
+		t.Fatal("expected host_name to exist")
+	}
+
+	_, ok = structKeys["Username"]
+	if !ok {
+		t.Fatal("expected Username to exist")
+	}
+}
+
+func TestDecoder_MapFieldNameStructFromMap(t *testing.T) {
+	t.Parallel()
+
+	foo := TestMapFieldName{}
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		Result: &foo,
+		MapFieldName: func(s string) string {
+			if s == "HostName" {
+				return "host_name"
+			}
+			if s == "Username" {
+				return "user_name"
+			}
+			return s
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	structKeys := map[string]any{
+		"host_name": "foo",
+		"user_name": "bar",
+	}
+
+	err = decoder.Decode(&structKeys)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	if foo.HostName != "foo" {
+		t.Fatal("expected HostName to be foo")
+	}
+
+	if foo.Username != "bar" {
+		t.Fatal("expected Username to be bar")
+	}
+}
+
+func TestDecoder_MapFieldNameWithMatchName(t *testing.T) {
+	t.Parallel()
+
+	type Target struct {
+		HostName string
+		Username string
+	}
+
+	input := map[string]any{
+		"HOST_NAME": "server1",
+		"user_name": "admin",
+	}
+
+	var result Target
+	decoder, err := NewDecoder(&DecoderConfig{
+		Result: &result,
+		MapFieldName: func(s string) string {
+			// Convert HostName -> host_name, Username -> user_name
+			if s == "HostName" {
+				return "host_name"
+			}
+			if s == "Username" {
+				return "user_name"
+			}
+			return s
+		},
+		MatchName: strings.EqualFold, // Case-insensitive fallback
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	// HOST_NAME should match host_name via case-insensitive MatchName
+	if result.HostName != "server1" {
+		t.Fatalf("expected HostName to be 'server1', got '%s'", result.HostName)
+	}
+
+	// user_name matches exactly
+	if result.Username != "admin" {
+		t.Fatalf("expected Username to be 'admin', got '%s'", result.Username)
+	}
+}
+
+func TestDecoder_MapFieldNameWithIgnoreUntaggedFields(t *testing.T) {
+	t.Parallel()
+
+	type Target struct {
+		TaggedField   string `mapstructure:"tagged_field"`
+		UntaggedField string
+	}
+
+	input := map[string]any{
+		"tagged_field":   "tagged_value",
+		"untagged_field": "untagged_value",
+	}
+
+	var result Target
+	decoder, err := NewDecoder(&DecoderConfig{
+		Result:               &result,
+		IgnoreUntaggedFields: true,
+		MapFieldName: func(s string) string {
+			// This would convert UntaggedField -> untagged_field,
+			// but IgnoreUntaggedFields takes precedence
+			if s == "UntaggedField" {
+				return "untagged_field"
+			}
+			return s
+		},
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	if result.TaggedField != "tagged_value" {
+		t.Fatalf("expected TaggedField to be 'tagged_value', got '%s'", result.TaggedField)
+	}
+
+	// UntaggedField should remain empty because IgnoreUntaggedFields is true
+	if result.UntaggedField != "" {
+		t.Fatalf("expected UntaggedField to be empty due to IgnoreUntaggedFields, got '%s'", result.UntaggedField)
+	}
+}
+
+// Test types for Unmarshaler
+type PersonWithUnmarshaler struct {
+	Name string
+	Age  int
+	raw  map[string]any // stores raw data for verification
+}
+
+func (p *PersonWithUnmarshaler) UnmarshalMapstructure(data any) error {
+	m, ok := data.(map[string]any)
+	if !ok {
+		return fmt.Errorf("expected map[string]any, got %T", data)
+	}
+	p.raw = m
+	if name, ok := m["name"].(string); ok {
+		p.Name = name
+	}
+	if age, ok := m["age"].(int); ok {
+		p.Age = age
+	}
+	return nil
+}
+
+func TestUnmarshaler_Basic(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"name": "Alice",
+		"age":  30,
+	}
+
+	var result PersonWithUnmarshaler
+	err := Decode(input, &result)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	if result.Name != "Alice" {
+		t.Errorf("expected Name 'Alice', got %q", result.Name)
+	}
+	if result.Age != 30 {
+		t.Errorf("expected Age 30, got %d", result.Age)
+	}
+	if result.raw == nil {
+		t.Error("expected raw to be set, but it was nil")
+	}
+}
+
+func TestUnmarshaler_WithDecodeHook(t *testing.T) {
+	t.Parallel()
+
+	// DecodeHook that transforms the data before Unmarshaler receives it
+	hook := func(from reflect.Type, to reflect.Type, data any) (any, error) {
+		if m, ok := data.(map[string]any); ok {
+			if name, ok := m["name"].(string); ok {
+				m["name"] = strings.ToUpper(name)
+			}
+		}
+		return data, nil
+	}
+
+	input := map[string]any{
+		"name": "alice",
+		"age":  30,
+	}
+
+	var result PersonWithUnmarshaler
+	config := &DecoderConfig{
+		DecodeHook: hook,
+		Result:     &result,
+	}
+
+	decoder, err := NewDecoder(config)
+	if err != nil {
+		t.Fatalf("failed to create decoder: %s", err)
+	}
+
+	if err := decoder.Decode(input); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	// Unmarshaler should receive transformed data
+	if result.Name != "ALICE" {
+		t.Errorf("expected Name 'ALICE' (transformed), got %q", result.Name)
+	}
+}
+
+func TestUnmarshaler_Disabled(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"name": "Alice",
+		"age":  30,
+	}
+
+	var result PersonWithUnmarshaler
+	config := &DecoderConfig{
+		DisableUnmarshaler: true,
+		Result:             &result,
+	}
+
+	decoder, err := NewDecoder(config)
+	if err != nil {
+		t.Fatalf("failed to create decoder: %s", err)
+	}
+
+	if err := decoder.Decode(input); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	// With Unmarshaler disabled, standard decoding should be used
+	// raw should be nil since UnmarshalMapstructure wasn't called
+	if result.raw != nil {
+		t.Error("Unmarshaler should not have been called when disabled")
+	}
+
+	// But the fields should still be decoded via normal path
+	if result.Name != "Alice" {
+		t.Errorf("expected Name 'Alice', got %q", result.Name)
+	}
+}
+
+// AddressWithUnmarshaler demonstrates nested struct with Unmarshaler
+type AddressWithUnmarshaler struct {
+	City    string
+	Country string
+}
+
+func (a *AddressWithUnmarshaler) UnmarshalMapstructure(data any) error {
+	m, ok := data.(map[string]any)
+	if !ok {
+		return fmt.Errorf("expected map, got %T", data)
+	}
+	if city, ok := m["city"].(string); ok {
+		a.City = strings.ToUpper(city)
+	}
+	if country, ok := m["country"].(string); ok {
+		a.Country = strings.ToUpper(country)
+	}
+	return nil
+}
+
+type PersonWithAddress struct {
+	Name    string
+	Address AddressWithUnmarshaler
+}
+
+func TestUnmarshaler_Nested(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"name": "Alice",
+		"address": map[string]any{
+			"city":    "new york",
+			"country": "usa",
+		},
+	}
+
+	var result PersonWithAddress
+	err := Decode(input, &result)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	if result.Name != "Alice" {
+		t.Errorf("expected Name 'Alice', got %q", result.Name)
+	}
+	// Address should use its Unmarshaler, uppercasing the values
+	if result.Address.City != "NEW YORK" {
+		t.Errorf("expected City 'NEW YORK', got %q", result.Address.City)
+	}
+	if result.Address.Country != "USA" {
+		t.Errorf("expected Country 'USA', got %q", result.Address.Country)
+	}
+}
+
+// SquashInnerNoUnmarshaler is a simple struct without Unmarshaler for squash testing
+type SquashInnerNoUnmarshaler struct {
+	City string
+}
+
+// PersonWithSquashedNoUnmarshaler tests that squash works normally when embedded type
+// doesn't implement Unmarshaler
+type PersonWithSquashedNoUnmarshaler struct {
+	Name                     string
+	SquashInnerNoUnmarshaler `mapstructure:",squash"`
+}
+
+func TestUnmarshaler_SquashWorksNormally(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"name": "Alice",
+		"city": "New York",
+	}
+
+	var result PersonWithSquashedNoUnmarshaler
+	err := Decode(input, &result)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	if result.Name != "Alice" {
+		t.Errorf("expected Name 'Alice', got %q", result.Name)
+	}
+	// Squashed field should be decoded via standard path
+	if result.City != "New York" {
+		t.Errorf("expected City 'New York', got %q", result.City)
+	}
+}
+
+// EmbeddedWithUnmarshaler tests embedded struct with Unmarshaler
+type EmbeddedWithUnmarshaler struct {
+	City string
+}
+
+var embeddedUnmarshalerCalled = false
+
+func (e *EmbeddedWithUnmarshaler) UnmarshalMapstructure(data any) error {
+	embeddedUnmarshalerCalled = true
+	m, ok := data.(map[string]any)
+	if !ok {
+		return fmt.Errorf("expected map, got %T", data)
+	}
+	if city, ok := m["city"].(string); ok {
+		e.City = strings.ToUpper(city)
+	}
+	return nil
+}
+
+// Note: When a type embeds another type that implements Unmarshaler,
+// Go's embedding rules cause the parent type to also implement Unmarshaler.
+// This test documents that behavior.
+type PersonWithSquashedEmbedded struct {
+	Name                    string
+	EmbeddedWithUnmarshaler `mapstructure:",squash"`
+}
+
+func TestUnmarshaler_EmbeddingInheritsInterface(t *testing.T) {
+	// Note: not parallel because we're using a package-level flag
+	embeddedUnmarshalerCalled = false
+
+	input := map[string]any{
+		"name": "Alice",
+		"city": "New York",
+	}
+
+	var result PersonWithSquashedEmbedded
+	err := Decode(input, &result)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	// Due to Go's embedding rules, PersonWithSquashedEmbedded implements
+	// Unmarshaler because EmbeddedWithUnmarshaler does. So the Unmarshaler
+	// IS called, and it only knows about the "city" field.
+	if !embeddedUnmarshalerCalled {
+		t.Error("Unmarshaler should have been called due to embedding inheritance")
+	}
+	// City should be uppercased because Unmarshaler was called
+	if result.City != "NEW YORK" {
+		t.Errorf("expected City 'NEW YORK', got %q", result.City)
+	}
+}
+
+// FailingUnmarshaler tests error handling
+type FailingUnmarshaler struct {
+	Value string
+}
+
+func (f *FailingUnmarshaler) UnmarshalMapstructure(data any) error {
+	return fmt.Errorf("intentional error")
+}
+
+func TestUnmarshaler_ErrorHandling(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"value": "test",
+	}
+
+	var result FailingUnmarshaler
+	err := Decode(input, &result)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	// Check that error is wrapped in DecodeError
+	var decodeErr *DecodeError
+	if !errors.As(err, &decodeErr) {
+		t.Errorf("expected DecodeError, got %T: %v", err, err)
+	}
+}
+
+// PointerReceiverUnmarshaler tests pointer receiver only
+type PointerReceiverUnmarshaler struct {
+	Value string
+}
+
+func (p *PointerReceiverUnmarshaler) UnmarshalMapstructure(data any) error {
+	m, ok := data.(map[string]any)
+	if !ok {
+		return fmt.Errorf("expected map, got %T", data)
+	}
+	if v, ok := m["value"].(string); ok {
+		p.Value = v + "_unmarshaled"
+	}
+	return nil
+}
+
+func TestUnmarshaler_PointerReceiver(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"value": "test",
+	}
+
+	var result PointerReceiverUnmarshaler
+	err := Decode(input, &result)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	if result.Value != "test_unmarshaled" {
+		t.Errorf("expected 'test_unmarshaled', got %q", result.Value)
+	}
+}
+
+func TestUnmarshaler_Metadata(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"name": "Alice",
+		"age":  30,
+	}
+
+	var md Metadata
+	var result PersonWithUnmarshaler
+	config := &DecoderConfig{
+		Metadata: &md,
+		Result:   &result,
+	}
+
+	decoder, err := NewDecoder(config)
+	if err != nil {
+		t.Fatalf("failed to create decoder: %s", err)
+	}
+
+	if err := decoder.Decode(input); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	// Verify Unmarshaler was called
+	if result.raw == nil {
+		t.Error("expected Unmarshaler to be called")
+	}
+}
+
+// NonSquashedEmbeddedWithUnmarshaler tests that non-squashed embedded structs DO use Unmarshaler
+type PersonWithNonSquashedEmbedded struct {
+	Name    string
+	Address EmbeddedWithUnmarshaler
+}
+
+func TestUnmarshaler_NonSquashedEmbedded(t *testing.T) {
+	// Note: not parallel because we're using a package-level flag
+	embeddedUnmarshalerCalled = false
+
+	input := map[string]any{
+		"name": "Alice",
+		"address": map[string]any{
+			"city": "new york",
+		},
+	}
+
+	var result PersonWithNonSquashedEmbedded
+	err := Decode(input, &result)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	if result.Name != "Alice" {
+		t.Errorf("expected Name 'Alice', got %q", result.Name)
+	}
+	// Non-squashed embedded field SHOULD use Unmarshaler (uppercased)
+	if result.Address.City != "NEW YORK" {
+		t.Errorf("expected City 'NEW YORK', got %q", result.Address.City)
+	}
+	if !embeddedUnmarshalerCalled {
+		t.Error("Unmarshaler should have been called for non-squashed embedded field")
+	}
+}
+
+// CustomString is a non-struct type that implements Unmarshaler
+type CustomString string
+
+func (c *CustomString) UnmarshalMapstructure(data any) error {
+	s, ok := data.(string)
+	if !ok {
+		return fmt.Errorf("expected string, got %T", data)
+	}
+	*c = CustomString("custom:" + s)
+	return nil
+}
+
+func TestUnmarshaler_NonStructType(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"name": "test-value",
+	}
+
+	type Result struct {
+		Name CustomString
+	}
+
+	var result Result
+	err := Decode(input, &result)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	if result.Name != "custom:test-value" {
+		t.Errorf("expected 'custom:test-value', got %q", result.Name)
+	}
+}
+
+// CustomSlice is a slice type that implements Unmarshaler
+type CustomSlice []string
+
+func (c *CustomSlice) UnmarshalMapstructure(data any) error {
+	switch v := data.(type) {
+	case []any:
+		*c = make([]string, len(v))
+		for i, item := range v {
+			if s, ok := item.(string); ok {
+				(*c)[i] = "item:" + s
+			}
+		}
+	case string:
+		// Also accept a single string
+		*c = []string{"single:" + v}
+	default:
+		return fmt.Errorf("expected slice or string, got %T", data)
+	}
+	return nil
+}
+
+func TestUnmarshaler_SliceType(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"tags": []any{"a", "b", "c"},
+	}
+
+	type Result struct {
+		Tags CustomSlice
+	}
+
+	var result Result
+	err := Decode(input, &result)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	expected := CustomSlice{"item:a", "item:b", "item:c"}
+	if !reflect.DeepEqual(result.Tags, expected) {
+		t.Errorf("expected %v, got %v", expected, result.Tags)
+	}
+}
+
+// CustomMap is a map type that implements Unmarshaler
+type CustomMap map[string]int
+
+func (c *CustomMap) UnmarshalMapstructure(data any) error {
+	m, ok := data.(map[string]any)
+	if !ok {
+		return fmt.Errorf("expected map, got %T", data)
+	}
+	*c = make(map[string]int)
+	for k, v := range m {
+		if num, ok := v.(int); ok {
+			(*c)["key:"+k] = num * 10
+		}
+	}
+	return nil
+}
+
+func TestUnmarshaler_MapType(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"scores": map[string]any{
+			"alice": 5,
+			"bob":   10,
+		},
+	}
+
+	type Result struct {
+		Scores CustomMap
+	}
+
+	var result Result
+	err := Decode(input, &result)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	if result.Scores["key:alice"] != 50 {
+		t.Errorf("expected key:alice=50, got %d", result.Scores["key:alice"])
+	}
+	if result.Scores["key:bob"] != 100 {
+		t.Errorf("expected key:bob=100, got %d", result.Scores["key:bob"])
+	}
+}
+
+func TestUnmarshaler_StructToMap(t *testing.T) {
+	t.Parallel()
+
+	// Input is a struct that implements Unmarshaler
+	// Output is a map - Unmarshaler should NOT be involved
+	input := PersonWithUnmarshaler{
+		Name: "Alice",
+		Age:  30,
+	}
+
+	var result map[string]any
+	err := Decode(input, &result)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	// Should use normal struct-to-map decoding
+	if result["Name"] != "Alice" {
+		t.Errorf("expected Name 'Alice', got %v", result["Name"])
+	}
+	if result["Age"] != 30 {
+		t.Errorf("expected Age 30, got %v", result["Age"])
 	}
 }

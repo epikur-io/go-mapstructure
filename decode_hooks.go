@@ -13,6 +13,15 @@ import (
 	"time"
 )
 
+// safeInterface safely extracts the interface value from a reflect.Value.
+// It returns nil if the value is not valid or is a nil interface.
+func safeInterface(v reflect.Value) any {
+	if !v.IsValid() {
+		return nil
+	}
+	return v.Interface()
+}
+
 // typedDecodeHook takes a raw DecodeHookFunc (an any) and turns
 // it into the proper DecodeHookFunc type, such as DecodeHookFuncType.
 func typedDecodeHook(h DecodeHookFunc) DecodeHookFunc {
@@ -44,10 +53,16 @@ func cachedDecodeHook(raw DecodeHookFunc) func(from reflect.Value, to reflect.Va
 	switch f := typedDecodeHook(raw).(type) {
 	case DecodeHookFuncType:
 		return func(from reflect.Value, to reflect.Value) (any, error) {
+			if !from.IsValid() {
+				return f(reflect.TypeOf((*any)(nil)).Elem(), to.Type(), nil)
+			}
 			return f(from.Type(), to.Type(), from.Interface())
 		}
 	case DecodeHookFuncKind:
 		return func(from reflect.Value, to reflect.Value) (any, error) {
+			if !from.IsValid() {
+				return f(reflect.Invalid, to.Kind(), nil)
+			}
 			return f(from.Kind(), to.Kind(), from.Interface())
 		}
 	case DecodeHookFuncValue:
@@ -70,8 +85,14 @@ func DecodeHookExec(
 ) (any, error) {
 	switch f := typedDecodeHook(raw).(type) {
 	case DecodeHookFuncType:
+		if !from.IsValid() {
+			return f(reflect.TypeOf((*any)(nil)).Elem(), to.Type(), nil)
+		}
 		return f(from.Type(), to.Type(), from.Interface())
 	case DecodeHookFuncKind:
+		if !from.IsValid() {
+			return f(reflect.Invalid, to.Kind(), nil)
+		}
 		return f(from.Kind(), to.Kind(), from.Interface())
 	case DecodeHookFuncValue:
 		return f(from, to)
@@ -92,7 +113,7 @@ func ComposeDecodeHookFunc(fs ...DecodeHookFunc) DecodeHookFunc {
 	}
 	return func(f reflect.Value, t reflect.Value) (any, error) {
 		var err error
-		data := f.Interface()
+		data := safeInterface(f)
 
 		newFrom := f
 		for _, c := range cached {
@@ -102,8 +123,11 @@ func ComposeDecodeHookFunc(fs ...DecodeHookFunc) DecodeHookFunc {
 			}
 			if v, ok := data.(reflect.Value); ok {
 				newFrom = v
-			} else {
+			} else if data != nil {
 				newFrom = reflect.ValueOf(data)
+			} else {
+				// Keep newFrom as invalid (zero) Value when data is nil
+				newFrom = reflect.Value{}
 			}
 		}
 
