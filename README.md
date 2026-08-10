@@ -22,18 +22,28 @@ Suppose we have a model like:
 
 ```go
 type User struct {
-  ID int64 `json:"id"`
-  Name int64 `json:"name"`
+  ID      int64    `json:"id"`
+  Name    string   `json:"name"`
   Profile *Profile `json:"profile"` // optional
 }
 type Profile struct {
-  ID int64 `json:"id"`
-  Title int64 `json:"title"` // required, validation fails if empty
+  ID          int64   `json:"id"`
+  Title       string  `json:"title"` // required, validation fails if empty
   Description *string `json:"description"`
 }
 ```
 
-If we enable `ExplicitNilValues` in the Decoder config we now get explicit handling of null values if the target type is a pointer to a struct. This is useful when you have for example a CRUD app and you only want to send the fields that change for create & update requests.
+With `ExplicitNilValues` enabled, a key that is **present and null** sets its target to the zero value, instead of being ignored. A key that is **absent** still leaves its target untouched. That is the distinction a CRUD app needs to implement `PATCH`: the client sends only the fields it is changing, and can still ask for one to be cleared.
+
+| input                    | without the flag | with the flag  |
+| ------------------------ | ---------------- | -------------- |
+| `{}` (key absent)        | unchanged        | unchanged      |
+| `{"description": null}`  | unchanged        | set to `nil`   |
+| `{"description": "new"}` | set to `"new"`   | set to `"new"` |
+
+The flag applies to any target a nil can be decoded into — pointers, maps and slices alike — and works whether or not `DecodeNil` is set. Note that `ZeroFields` is *not* a substitute: it also replaces maps and slices wholesale instead of merging into them.
+
+One case is worth knowing about in advance. For a **non-nil pointer-to-struct field**, a null zeroes the struct behind the pointer rather than setting the pointer itself to `nil` — the decoder dereferences such fields before decoding into them, which is upstream behaviour and not something this flag changes. So after `{"profile": null}`, `u.Profile` is a pointer to a zeroed `Profile`, not `nil`.
 
 ### Example
 
@@ -45,63 +55,78 @@ func ptr[T any](v T) *T {
 
 // Decoder config for explicit null handling
 decoderConfig := &mapstructure.DecoderConfig{
-  TagName: "json",
-  Squash:  true,
-  DecodeNil:             true,
-  ExplicitNilPtrStructs: true,
+  TagName:           "json",
+  Squash:            true,
+  ExplicitNilValues: true,
 }
 
 // Example user loaded from database
 u := &User{
   ID:   1,
-  Name: "test_user"
+  Name: "test_user",
   Profile: &Profile{
-    ID:     1,
-    Title:  "user profile"
-    Description:  ptr("user profile description")
-  }
+    ID:          1,
+    Title:       "user profile",
+    Description: ptr("user profile description"),
+  },
+}
+
+decoderConfig.Result = u
+decoder, err := mapstructure.NewDecoder(decoderConfig)
+if err != nil {
+  panic(err)
 }
 ```
 
-If we want to change only the `profile.description` and leave `profile.title` and the rest unchanged, we can provide following json payload:
+If we want to change only `profile.description` and leave `profile.title` and the rest unchanged, we can provide the following json payload:
 
 ```json
 {
   "profile": {
-    "description": "new title"
+    "description": "new description"
   }
 }
 ```
 
-If we want to set all `profile.*` to zero/nil, we can provide following json payload:
+If we want to clear `profile.description` while leaving the rest of the profile alone, we send it as null:
 
 ```json
 {
-	"profile": null
+  "profile": {
+    "description": null
+  }
 }
 ```
 
-Validation of the `User` struct will fail because `profile.title` is required. 
+And if we want to reset the whole profile, we send the profile itself as null:
+
+```json
+{
+  "profile": null
+}
+```
+
+Validation of the `User` struct then fails because `profile.title` is required and is now empty — which is the intended outcome, since the payload asked for a profile with nothing in it.
 
 
 ## Installation
 
 
 ```shell
-go get github.com/epikur-io/go-mapstructure/v2
+go get github.com/epikur-io/go-mapstructure/v3
 ```
 
 ## Migrating from `github.com/mitchellh/mapstructure`
 
 [@mitchehllh](https://github.com/mitchellh) announced his intent to archive some of his unmaintained projects (see [here](https://gist.github.com/mitchellh/90029601268e59a29e64e55bab1c5bdc) and [here](https://github.com/mitchellh/mapstructure/issues/349)). This is a repository achieved the "blessed fork" status.
 
-You can migrate to this package by changing your import paths in your Go files to `github.com/epikur-io/go-mapstructure/v2`.
+You can migrate to this package by changing your import paths in your Go files to `github.com/epikur-io/go-mapstructure/v3`.
 The API is the same, so you don't need to change anything else.
 
 Here is a script that can help you with the migration:
 
 ```shell
-sed -i 's|github.com/mitchellh/mapstructure|github.com/go-viper/mapstructure/v2|g' $(find . -type f -name '*.go')
+sed -i 's|github.com/mitchellh/mapstructure|github.com/epikur-io/go-mapstructure/v3|g' $(find . -type f -name '*.go')
 ```
 
 If you need more time to migrate your code, that is absolutely fine.
@@ -114,7 +139,7 @@ replace github.com/mitchellh/mapstructure => github.com/go-viper/mapstructure v1
 
 ## Usage & Example
 
-For usage and examples see the [documentation](https://pkg.go.dev/mod/github.com/epikur-io/go-mapstructure/v2).
+For usage and examples see the [documentation](https://pkg.go.dev/mod/github.com/epikur-io/go-mapstructure/v3).
 
 The `Decode` function has examples associated with it there.
 
