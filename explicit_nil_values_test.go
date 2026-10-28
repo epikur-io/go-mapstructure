@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // Tests for ExplicitNilValues, the one behaviour this fork adds to upstream.
@@ -93,20 +94,15 @@ func TestDecoder_ExplicitNilValuesOption(t *testing.T) {
 			},
 		},
 		{
-			// Note what this does NOT do: the pointer stays non-nil and the
-			// struct behind it is zeroed. That is upstream's doing rather than
-			// this flag's - decodeStructFromMap dereferences a non-nil
-			// pointer-to-struct field before decoding into it - and it is
-			// pinned here because it is surprising and because code that
-			// branches on `Owner == nil` would be wrong about it.
-			name:  "explicit null zeroes a struct behind a pointer",
+			// The pointer itself is cleared. Upstream unwraps every non-nil
+			// pointer-to-struct field before decoding into it, so a null
+			// zeroed the struct behind the pointer and left the pointer
+			// non-nil; this fork unwraps embedded fields only.
+			name:  "explicit null clears a pointer to a struct",
 			input: map[string]any{"owner": nil},
 			expect: func(s *envSettings) error {
-				if s.Owner == nil {
-					return nil // acceptable, and what a reader would expect
-				}
-				if *s.Owner != (envOwner{}) {
-					return errf("owner = %+v, want the zero struct", *s.Owner)
+				if s.Owner != nil {
+					return errf("owner = %+v, want nil", *s.Owner)
 				}
 				return nil
 			},
@@ -290,6 +286,81 @@ func TestDecoder_ExplicitNilValuesStillFillsNilPointers(t *testing.T) {
 	if result.Comment == nil || *result.Comment != "new" {
 		t.Fatalf("bad: %v", result.Comment)
 	}
+}
+
+// A pointer to any struct is cleared by a null, a time.Time included, at any
+// depth; an object sent for one still merges; and an embedded pointer still
+// flattens, its fields read from the outer keys.
+func TestDecoder_ExplicitNilValuesClearsStructPointers(t *testing.T) {
+	t.Parallel()
+
+	type account struct {
+		ID        int        `json:"id"`
+		ExpiresAt *time.Time `json:"expires_at"`
+		Owner     *envOwner  `json:"owner"`
+	}
+	type withEmbedded struct {
+		*envOwner
+		Name string `json:"name"`
+	}
+	expires := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	decode := func(t *testing.T, input map[string]any, result any) {
+		t.Helper()
+		decoder, err := NewDecoder(&DecoderConfig{
+			TagName:           "json",
+			Squash:            true,
+			ExplicitNilValues: true,
+			DecodeHook:        StringToTimeHookFunc(time.RFC3339),
+			Result:            result,
+		})
+		if err != nil {
+			t.Fatalf("err: %s", err)
+		}
+		if err := decoder.Decode(input); err != nil {
+			t.Fatalf("err: %s", err)
+		}
+	}
+
+	t.Run("a null clears a pointer to a time", func(t *testing.T) {
+		got := &account{ID: 1, ExpiresAt: ptrTo(expires), Owner: &envOwner{ID: 7, Team: "platform"}}
+		decode(t, map[string]any{"expires_at": nil}, got)
+		if got.ExpiresAt != nil {
+			t.Fatalf("expires_at = %v, want nil", *got.ExpiresAt)
+		}
+		if got.ID != 1 || got.Owner == nil || *got.Owner != (envOwner{ID: 7, Team: "platform"}) {
+			t.Fatalf("bad: the rest moved: %+v %+v", got, got.Owner)
+		}
+	})
+
+	t.Run("a time is still assigned", func(t *testing.T) {
+		got := &account{ID: 1, ExpiresAt: ptrTo(expires)}
+		decode(t, map[string]any{"expires_at": "2031-01-01T00:00:00Z"}, got)
+		if got.ExpiresAt == nil || !got.ExpiresAt.Equal(time.Date(2031, 1, 1, 0, 0, 0, 0, time.UTC)) {
+			t.Fatalf("expires_at = %v", got.ExpiresAt)
+		}
+	})
+
+	t.Run("a null one level down, under an object that merges", func(t *testing.T) {
+		type holder struct {
+			Account *account `json:"account"`
+		}
+		got := &holder{Account: &account{ID: 1, ExpiresAt: ptrTo(expires), Owner: &envOwner{ID: 7}}}
+		decode(t, map[string]any{"account": map[string]any{"owner": nil}}, got)
+		if got.Account == nil || got.Account.ID != 1 || got.Account.ExpiresAt == nil {
+			t.Fatalf("bad: the merged object lost fields: %+v", got.Account)
+		}
+		if got.Account.Owner != nil {
+			t.Fatalf("owner = %+v, want nil", *got.Account.Owner)
+		}
+	})
+
+	t.Run("an embedded pointer still flattens", func(t *testing.T) {
+		got := &withEmbedded{envOwner: &envOwner{ID: 7, Team: "platform"}, Name: "n"}
+		decode(t, map[string]any{"team": "infra"}, got)
+		if got.envOwner == nil || *got.envOwner != (envOwner{ID: 7, Team: "infra"}) || got.Name != "n" {
+			t.Fatalf("bad: %+v %+v", got.envOwner, got)
+		}
+	})
 }
 
 // errf keeps the table's expectations to one line each; the message is what a

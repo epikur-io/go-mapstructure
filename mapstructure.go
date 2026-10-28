@@ -1598,8 +1598,16 @@ func (d *Decoder) decodeStructFromMap(name string, dataVal, val reflect.Value) e
 		for i := 0; i < structType.NumField(); i++ {
 			fieldType := structType.Field(i)
 			fieldVal := structVal.Field(i)
-			if fieldVal.Kind() == reflect.Ptr && fieldVal.Elem().Kind() == reflect.Struct {
+			if fieldType.Anonymous && fieldVal.Kind() == reflect.Ptr && fieldVal.Elem().Kind() == reflect.Struct {
 				// Handle embedded struct pointers as embedded structs.
+				//
+				// Embedded ones only (this fork): upstream unwraps every
+				// non-nil pointer-to-struct field, so a null decoded into one
+				// zeroed the struct behind the pointer instead of setting the
+				// pointer to nil - a *time.Time became 0001-01-01. A named
+				// field goes through decodePtr instead, which sets it to nil
+				// for a null and decodes into the existing struct for an
+				// object, so a partial update still merges.
 				fieldVal = fieldVal.Elem()
 			}
 

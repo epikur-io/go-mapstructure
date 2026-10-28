@@ -43,7 +43,7 @@ With `ExplicitNilValues` enabled, a key that is **present and null** sets its ta
 
 The flag applies to any target a nil can be decoded into — pointers, maps and slices alike — and works whether or not `DecodeNil` is set. Note that `ZeroFields` is *not* a substitute: it also replaces maps and slices wholesale instead of merging into them.
 
-One case is worth knowing about in advance. For a **non-nil pointer-to-struct field**, a null zeroes the struct behind the pointer rather than setting the pointer itself to `nil` — the decoder dereferences such fields before decoding into them, which is upstream behaviour and not something this flag changes. So after `{"profile": null}`, `u.Profile` is a pointer to a zeroed `Profile`, not `nil`.
+A **pointer to a struct** is cleared too: after `{"profile": null}`, `u.Profile` is `nil`, and a `*time.Time` set to null is `nil` rather than `0001-01-01`. Upstream dereferences every non-nil pointer-to-struct field before decoding into it, so a null there zeroed the struct behind the pointer and left the pointer set; this fork dereferences embedded fields only, as the code's own comment intends. An object sent for such a field still merges into the existing struct (unless `ZeroFields` is set, which replaces it, as that option documents).
 
 ### Example
 
