@@ -381,6 +381,14 @@ type DecoderConfig struct {
 	// when you only want to update target fields that are present in the input
 	// This flag will also cause to ignore the ZeroFields flag.
 	ExplicitNilValues bool
+
+	// IgnoreSquashTag, if set to true, ignores SquashTagOption in a field's
+	// tag in both directions: the field is decoded under its own name, as
+	// encoding/json treats an option it does not know. Squash still squashes
+	// embedded structs. For a decoder whose TagName another library writes
+	// from ("json"), where a squashed field would be read flat but written
+	// nested.
+	IgnoreSquashTag bool
 }
 
 // A Decoder takes a raw interface value and turns it into structured
@@ -1186,8 +1194,9 @@ func (d *Decoder) decodeMapFromStruct(name string, dataVal reflect.Value, val re
 				continue
 			}
 
-			// If "squash" is specified in the tag, we squash the field down.
-			squash = squash || strings.Contains(tagValue[index+1:], d.config.SquashTagOption)
+			// If "squash" is specified in the tag, we squash the field down,
+			// unless the config ignores the option.
+			squash = squash || (!d.config.IgnoreSquashTag && strings.Contains(tagValue[index+1:], d.config.SquashTagOption))
 			if squash {
 				// When squashing, the embedded type can be a pointer to a struct.
 				if v.Kind() == reflect.Ptr && v.Elem().Kind() == reflect.Struct {
@@ -1621,7 +1630,7 @@ func (d *Decoder) decodeStructFromMap(name string, dataVal, val reflect.Value) e
 				tagParts = []string{""}
 			}
 			for _, tag := range tagParts[1:] {
-				if tag == d.config.SquashTagOption {
+				if tag == d.config.SquashTagOption && !d.config.IgnoreSquashTag {
 					squash = true
 					break
 				}

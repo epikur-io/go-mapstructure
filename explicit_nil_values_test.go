@@ -7,7 +7,8 @@ import (
 	"time"
 )
 
-// Tests for ExplicitNilValues, the one behaviour this fork adds to upstream.
+// Tests for ExplicitNilValues, a behaviour this fork adds to upstream (see also
+// ignore_squash_tag_test.go).
 //
 // It lives in its own file on purpose. The feature is ten lines in
 // mapstructure.go and everything else here tracks upstream, so rebasing onto a

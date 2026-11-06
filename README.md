@@ -16,7 +16,7 @@ structure.
 
 ## About this fork
 
-This is a fork of [mapstructure](https://github.com/go-viper/mapstructure), that adds a special config flag to Decoder config for following use case:
+This is a fork of [mapstructure](https://github.com/go-viper/mapstructure) that adds two config flags to the decoder config: `ExplicitNilValues`, for the following use case, and `IgnoreSquashTag` (see [below](#ignoresquashtag)).
 
 Suppose we have a model like:
 
@@ -107,6 +107,31 @@ And if we want to reset the whole profile, we send the profile itself as null:
 ```
 
 Validation of the `User` struct then fails because `profile.title` is required and is now empty — which is the intended outcome, since the payload asked for a profile with nothing in it.
+
+### IgnoreSquashTag
+
+With `TagName: "json"` the decoder reads the tag encoding/json writes from, and a `squash` option in it means two things: mapstructure reads the field flat, while encoding/json, which ignores an option it does not know, writes it nested. With `IgnoreSquashTag` the decoder ignores the option (whatever `SquashTagOption` names it), in both directions, so the field is read and written under its own name, as encoding/json treats it. `Squash` still squashes embedded structs, which encoding/json flattens too.
+
+```go
+type Meta struct {
+  Tags []string `json:"tags"`
+}
+type Body struct {
+  Name string `json:"name"`
+  Meta Meta   `json:"meta,squash"`
+}
+
+decoderConfig := &mapstructure.DecoderConfig{
+  TagName:         "json",
+  Squash:          true,
+  IgnoreSquashTag: true,
+}
+```
+
+| input                       | without the flag  | with the flag     |
+| --------------------------- | ----------------- | ----------------- |
+| `{"tags": ["a"]}`           | `Meta.Tags` set   | `tags` is unused  |
+| `{"meta": {"tags": ["a"]}}` | `meta` is unused  | `Meta.Tags` set   |
 
 
 ## Installation
