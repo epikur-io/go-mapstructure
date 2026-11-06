@@ -389,6 +389,13 @@ type DecoderConfig struct {
 	// from ("json"), where a squashed field would be read flat but written
 	// nested.
 	IgnoreSquashTag bool
+
+	// NameEmbeddedByTag, if set to true, decodes an embedded struct whose tag
+	// gives it a name as a field of that name, in both directions, as
+	// encoding/json does, instead of squashing it under Squash. An embedded
+	// struct whose tag gives no name is still squashed, and a squash option in
+	// the tag still squashes it unless IgnoreSquashTag is set.
+	NameEmbeddedByTag bool
 }
 
 // A Decoder takes a raw interface value and turns it into structured
@@ -1144,6 +1151,17 @@ func (d *Decoder) decodeMapFromMap(name string, dataVal reflect.Value, val refle
 	return errors.Join(errs...)
 }
 
+// namedByTag reports whether f is an embedded field whose tag gives it a name,
+// which NameEmbeddedByTag decodes as a field of that name.
+func (d *Decoder) namedByTag(f reflect.StructField) bool {
+	if !d.config.NameEmbeddedByTag || !f.Anonymous {
+		return false
+	}
+	tagValue, _ := getTagValue(f, d.config.TagName)
+	name := strings.SplitN(tagValue, ",", 2)[0]
+	return name != "" && name != "-"
+}
+
 func (d *Decoder) decodeMapFromStruct(name string, dataVal reflect.Value, val reflect.Value, valMap reflect.Value) error {
 	typ := dataVal.Type()
 	for i := 0; i < typ.NumField(); i++ {
@@ -1171,8 +1189,9 @@ func (d *Decoder) decodeMapFromStruct(name string, dataVal reflect.Value, val re
 			continue
 		}
 
-		// If Squash is set in the config, we squash the field down.
-		squash := d.config.Squash && v.Kind() == reflect.Struct && f.Anonymous
+		// If Squash is set in the config, we squash the field down, unless
+		// its tag names it and the config names it so.
+		squash := d.config.Squash && v.Kind() == reflect.Struct && f.Anonymous && !d.namedByTag(f)
 
 		// If Deep is set in the config, set as default value.
 		deep := d.config.Deep
@@ -1591,6 +1610,7 @@ func (d *Decoder) decodeStructFromMap(name string, dataVal, val reflect.Value) e
 	type field struct {
 		field reflect.StructField
 		val   reflect.Value
+		named bool // an embedded struct its tag names (NameEmbeddedByTag)
 	}
 
 	// remainField is set to a valid field set with the "remain" tag if
@@ -1607,7 +1627,10 @@ func (d *Decoder) decodeStructFromMap(name string, dataVal, val reflect.Value) e
 		for i := 0; i < structType.NumField(); i++ {
 			fieldType := structType.Field(i)
 			fieldVal := structVal.Field(i)
-			if fieldType.Anonymous && fieldVal.Kind() == reflect.Ptr && fieldVal.Elem().Kind() == reflect.Struct {
+			// An embedded struct its tag names is a named field: neither
+			// unwrapped nor squashed.
+			named := d.namedByTag(fieldType)
+			if fieldType.Anonymous && !named && fieldVal.Kind() == reflect.Ptr && fieldVal.Elem().Kind() == reflect.Struct {
 				// Handle embedded struct pointers as embedded structs.
 				//
 				// Embedded ones only (this fork): upstream unwraps every
@@ -1621,7 +1644,7 @@ func (d *Decoder) decodeStructFromMap(name string, dataVal, val reflect.Value) e
 			}
 
 			// If "squash" is specified in the tag, we squash the field down.
-			squash := d.config.Squash && fieldVal.Kind() == reflect.Struct && fieldType.Anonymous
+			squash := d.config.Squash && fieldVal.Kind() == reflect.Struct && fieldType.Anonymous && !named
 			remain := false
 
 			// We always parse the tags cause we're looking for other tags too
@@ -1672,10 +1695,10 @@ func (d *Decoder) decodeStructFromMap(name string, dataVal, val reflect.Value) e
 
 			// Build our field
 			if remain {
-				remainField = &field{fieldType, fieldVal}
+				remainField = &field{fieldType, fieldVal, named}
 			} else {
 				// Normal struct field, store it away
-				fields = append(fields, field{fieldType, fieldVal})
+				fields = append(fields, field{fieldType, fieldVal, named})
 			}
 		}
 	}
@@ -1731,8 +1754,10 @@ func (d *Decoder) decodeStructFromMap(name string, dataVal, val reflect.Value) e
 		}
 
 		// If we can't set the field, then it is unexported or something,
-		// and we just continue onwards.
-		if !fieldValue.CanSet() {
+		// and we just continue onwards. An embedded struct of an unexported
+		// type its tag names is decoded all the same, as squashing it would
+		// have: its exported fields can be set, as encoding/json sets them.
+		if !fieldValue.CanSet() && !(f.named && fieldValue.Kind() == reflect.Struct) {
 			continue
 		}
 

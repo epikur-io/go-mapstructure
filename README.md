@@ -16,7 +16,7 @@ structure.
 
 ## About this fork
 
-This is a fork of [mapstructure](https://github.com/go-viper/mapstructure) that adds two config flags to the decoder config: `ExplicitNilValues`, for the following use case, and `IgnoreSquashTag` (see [below](#ignoresquashtag)).
+This is a fork of [mapstructure](https://github.com/go-viper/mapstructure) that adds three config flags to the decoder config: `ExplicitNilValues`, for the following use case, `IgnoreSquashTag` (see [below](#ignoresquashtag)) and `NameEmbeddedByTag` (see [below](#nameembeddedbytag)).
 
 Suppose we have a model like:
 
@@ -133,6 +133,33 @@ decoderConfig := &mapstructure.DecoderConfig{
 | `{"tags": ["a"]}`           | `Meta.Tags` set   | `tags` is unused  |
 | `{"meta": {"tags": ["a"]}}` | `meta` is unused  | `Meta.Tags` set   |
 
+
+### NameEmbeddedByTag
+
+encoding/json flattens an embedded struct only when its tag gives no name; one embedded with a name in its tag is a field of that name, written nested. `Squash` squashes every embedded struct, named or not, so with `TagName: "json"` such a type is read flat but written nested. With `NameEmbeddedByTag` an embedded struct whose tag gives a name is decoded as that field, in both directions; one without a name is still squashed, and a `squash` option in the tag keeps its meaning (see `IgnoreSquashTag`).
+
+```go
+type Audit struct {
+  CreatedBy string `json:"created_by"`
+}
+type Book struct {
+  Audit `json:"audit"`
+  Title string `json:"title"`
+}
+
+decoderConfig := &mapstructure.DecoderConfig{
+  TagName:           "json",
+  Squash:            true,
+  NameEmbeddedByTag: true,
+}
+```
+
+| input                                    | without the flag   | with the flag      |
+| ---------------------------------------- | ------------------ | ------------------ |
+| `{"created_by": "ada"}`                  | `CreatedBy` set    | `created_by` unused |
+| `{"audit": {"created_by": "ada"}}`       | `audit` unused     | `CreatedBy` set    |
+
+An embedded pointer named this way is a named pointer field: an object sets it, and with `ExplicitNilValues` a null clears it. An embedded struct of an unexported type is decoded through its exported fields, as encoding/json does; a pointer to one cannot be allocated, by encoding/json either.
 
 ## Installation
 
